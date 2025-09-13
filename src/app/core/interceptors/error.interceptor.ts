@@ -6,69 +6,66 @@ import {
   HttpInterceptor,
   HttpErrorResponse
 } from '@angular/common/http';
-import { Observable, catchError, throwError } from 'rxjs';
-import { NavigationExtras, Router } from '@angular/router';
+import { Observable, throwError } from 'rxjs';
+import { catchError, switchMap } from 'rxjs/operators';
+import { Router, NavigationExtras } from '@angular/router';
 import { ToastrService } from 'ngx-toastr';
 import { AccountService } from 'src/app/account/account.service';
 
 @Injectable()
 export class ErrorInterceptor implements HttpInterceptor {
 
-  constructor(private router: Router, private toastr: ToastrService,
-              private accountService: AccountService) {}
-  ctr = 0;
+  constructor(
+    private router: Router,
+    private toastr: ToastrService,
+    private accountService: AccountService
+  ) {}
 
   intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
+    console.log('works');
+    
     return next.handle(request).pipe(
       catchError((error: HttpErrorResponse) => {
-        if(error) {
-          if(error.status === 400){
-            if(error.error.errors){
-              throw error.error;
+        if (error) {
+          if (error.status === 400) {
+            if (error.error?.errors) {
+              return throwError(() => error.error);
             } else {
-              this.toastr.error(error.error.message, error.status.toString())
+              this.toastr.error(error.error?.message || 'Bad Request', error.status.toString());
             }
           }
-          if(error.status === 401){
-            if(this.ctr != 1){
-              this.ctr++;
-              this.accountService.refreshToken().subscribe({
-                next: (x: any) =>{
-                  this.toastr.error("Token refreshed, try again", error.status.toString());
-                  window.location.reload();
-                },
-                error: (err: any) =>{
-                  this.accountService.revokeToken().subscribe({
-                    next: (x: any) => {
-                      this.router.navigateByUrl('/account/login');
-                      this.toastr.error("Try to re-login", error.status.toString());
-                    }
+          if (error.status === 401) {
+            console.log('401 part 1');
+            
+            return this.accountService.refreshToken().pipe(
+              switchMap(() => {
+                return next.handle(request);
+              }),
+              catchError(() => {
+                return this.accountService.revokeToken().pipe(
+                  switchMap(() => {
+                    this.router.navigateByUrl('/account/login');
+                    this.toastr.error("Try to re-login", "401");
+                    return throwError(() => error);
                   })
-                }
+                );
               })
-            }
-            else{
-              this.ctr = 0
-              this.toastr.error(error.error.message, error.status.toString())
-            }
+            );
           }
-
-
-          if(error.status === 403){
-            console.log('403');
-            this.toastr.error(error.error.message, error.status.toString())
+          if (error.status === 403) {
+            this.toastr.error(error.error?.message || 'Forbidden', error.status.toString());
             this.router.navigateByUrl('/forbidden');
           }
-          if(error.status === 404) {
+          if (error.status === 404) {
             this.router.navigateByUrl('/not-found');
           }
-          if(error.status === 500){
-            const navigationExtras: NavigationExtras = {state: {error: error.error}};
+          if (error.status === 500) {
+            const navigationExtras: NavigationExtras = { state: { error: error.error } };
             this.router.navigateByUrl('/server-error', navigationExtras);
           }
         }
-        return throwError(() => new Error(error.message))
+        return throwError(() => error);
       })
-    )
+    );
   }
 }
